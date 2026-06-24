@@ -687,15 +687,93 @@ function observeReveals(root=document){
   setTimeout(()=>els.forEach(x=>x.classList.add('in')),700);
 }
 
-/* ════ SESLİ ZEKİ (Web Speech API) ════ */
+/* ════ SESLİ AKILLI ASİSTAN (Web Speech API) — kaliteli ses seçimi + TTS metin normalizasyonu ════ */
 let sesAcik=false, trVoice=null;
-function loadVoices(){const vs=(window.speechSynthesis?speechSynthesis.getVoices():[])||[];trVoice=vs.find(v=>/tr[-_]?TR/i.test(v.lang))||vs.find(v=>/turk/i.test(v.name))||null;}
+function loadVoices(){
+  const vs=(window.speechSynthesis?speechSynthesis.getVoices():[])||[];
+  const tr=vs.filter(v=>/tr[-_]?TR/i.test(v.lang)||/turk|türk/i.test(v.name||''));
+  const score=v=>{const n=(v.name||'').toLowerCase();let s=0;
+    if(/google/.test(n))s+=100;                       // Google Türkçe = en doğal
+    if(/natural|neural|online/.test(n))s+=60;          // Microsoft Online (Natural)
+    if(/(emel|tolga|filiz|sedef|yelda|ahmet)/.test(n))s+=20;
+    if(/tr[-_]?TR/i.test(v.lang))s+=10;
+    if(v.localService===false)s+=5;
+    return s;};
+  tr.sort((a,b)=>score(b)-score(a));
+  trVoice=tr[0]||vs.find(v=>/tr[-_]?TR/i.test(v.lang))||null;
+}
 if(window.speechSynthesis){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
 function speakers(on){qsa('.orb').forEach(o=>o.classList.toggle('speaking',on));}
+
+/* — TTS metin normalizasyonu: kısaltma + sembol + sayı (asistan doğru telaffuz etsin) — */
+const _KIS={
+ "ERP":"E Re Pe","KDV":"Ka De Ve","ÜTS":"Ü Te Se","UTS":"U Te Se","CRM":"Se Re Me",
+ "SGK":"Se Ge Ka","EBA":"E Be A","SUT":"Es U Te","DMO":"De Me O","KVKK":"Ka Ve Ke Ke",
+ "SKT":"Es Ke Te","TCO":"Te Ce O","MRP":"Me Re Pe","API":"A Pe İ","RPA":"Re Pe A",
+ "WMS":"Ve Me Se","MES":"Me Es","GİB":"Ge İ Be","SoD":"Es O De","OEE":"O E E",
+ "KKD":"Ka Ka De","CPV":"Se Pe Ve","CTR":"Se Te Re","CPL":"Se Pe Le","SEO":"Se E O",
+ "GEO":"Ge E O","SDS":"Es De Es","QMS":"Ku Me Es","CMMS":"Se Me Me Es","SKU":"Es Ke U",
+ "ROI":"Er O İ","KPI":"Ke Pe İ","DB":"De Be","PO":"Pe O","SLA":"Es Le A","NPS":"Ne Pe Se",
+ "İSG":"İş Sağlığı ve Güvenliği","ISG":"İş Sağlığı ve Güvenliği","OTIF":"Otif","FRS":"Fe Re Se",
+ "AB":"Avrupa Birliği","AI":"yapay zekâ","BT":"Be Te","IT":"Ay Ti","DM":"De Me","KK":"Kalite Kontrol",
+ "CoA":"Se O A","WIP":"Vip","LOGO":"Logo","MEDULA":"Medula","EKAP":"Ekap","ALCOA":"Alkoa",
+ "CAPA":"Capa","MEDPOL":"Medpol","EUR":"euro","USD":"dolar","TL":"lira"
+};
+const _ABBR_RE=new RegExp(
+ "(?<![0-9A-Za-zÇĞİıÖŞÜçğöşü])("+
+ Object.keys(_KIS).sort((a,b)=>b.length-a.length).map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join("|")+
+ ")(?![0-9A-Za-zÇĞİıÖŞÜçğöşü])","g");
+const _BIR=["","bir","iki","üç","dört","beş","altı","yedi","sekiz","dokuz"];
+const _ON=["","on","yirmi","otuz","kırk","elli","altmış","yetmiş","seksen","doksan"];
+const _BINS=["","bin","milyon","milyar","trilyon","katrilyon"];
+function _uclu(n){let p=[];const y=Math.floor(n/100);n=n%100;
+ if(y===1)p.push("yüz");else if(y>1)p.push(_BIR[y]+" yüz");
+ const o=Math.floor(n/10),b=n%10;if(o)p.push(_ON[o]);if(b)p.push(_BIR[b]);return p.join(" ");}
+function _sayi(x){let n=parseInt(x,10);if(isNaN(n))return "";if(n===0)return "sıfır";if(n<0)return "eksi "+_sayi(-n);
+ let parts=[],grup=0;while(n>0){const u=n%1000;n=Math.floor(n/1000);
+  if(u){if(grup>=_BINS.length)return ""; let y=(grup===1&&u===1)?"bin":_uclu(u);
+   if(grup>0&&!(grup===1&&u===1))y+=" "+_BINS[grup];parts.unshift(y);}grup++;}
+ return parts.join(" ");}
+function _strSayi(s){s=s.replace(/\./g,"");if(s.includes(",")){const i=s.indexOf(",");const t=s.slice(0,i),d=s.slice(i+1);
+  const tw=t?_sayi(t):"sıfır";return d?tw+" virgül "+_sayi(d):tw;}return _sayi(s);}
+function _dec(s){s=s.trim();if(s.includes(".")&&s.includes(","))return _strSayi(s);
+ s=s.replace(".",",");if(s.includes(",")){const i=s.indexOf(",");const t=s.slice(0,i),d=s.slice(i+1);
+  const tw=t?_sayi(t):"sıfır";return d?tw+" virgül "+_sayi(d):tw;}return _sayi(s);}
+function _olcek(su){const u=su.toUpperCase();return u==="M"?"milyon":u==="B"?"milyar":"bin";}
+function seslendirilebilir(t){
+ if(!t)return "";let s=String(t);
+ s=s.replace(/<[^>]+>/g," ").replace(/&#39;/g,"'").replace(/&amp;/g," ve ").replace(/&[a-z]+;/gi," ");
+ s=s.replace(/[◆★→←↔✓✕×•·▸▪◦‹›»«]/g," ").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE0F}]/gu," ");
+ s=s.replace(/(\d)\s*TL\b/g,"$1 lira");
+ s=s.replace(_ABBR_RE,(m,a)=>_KIS[a]||a);
+ s=s.replace(/₺\s*(\d{1,3}(?:[.,]\d{1,3})?)\s*([MK])\b/gi,(m,n,su)=>_dec(n)+" "+_olcek(su)+" lira");
+ s=s.replace(/₺\s*(\d[\d.,]*)/g,(m,n)=>_strSayi(n)+" lira");
+ s=s.replace(/(\d[\d.,]*)\s*₺/g,(m,n)=>_strSayi(n)+" lira");
+ s=s.replace(/(?<![\wçğıöşüÇĞİÖŞÜ.,])(\d{1,3}(?:[.,]\d{1,3})?)\s*([MK])\b/g,(m,n,su)=>_dec(n)+" "+_olcek(su));
+ s=s.replace(/%\s*(\d+(?:[.,]\d+)*)/g,(m,g)=>{if(!g.includes(",")&&(g.split(".").length-1)===1)g=g.replace(".",",");return "yüzde "+_strSayi(g);});
+ s=s.replace(/(?<![\d.,])\d{1,3}(?:\.\d{3})+(?:,\d+)?(?!\d)/g,m=>_strSayi(m));
+ s=s.replace(/(?<![\d.,/-])(?!0)\d{4,}(?:,\d+)?(?![\d/-])/g,m=>_strSayi(m));
+ s=s.replace(/₺/g," lira").replace(/\$/g," dolar").replace(/€/g," euro").replace(/%/g," yüzde ");
+ return s.replace(/\s{2,}/g," ").trim();
+}
+function _ttsParcala(t){const ps=t.split(/(?<=[.!?…:;])\s+/);const out=[];let cur="";
+ for(const p of ps){if((cur+" "+p).trim().length>170){if(cur)out.push(cur.trim());cur=p;}else cur=(cur?cur+" ":"")+p;}
+ if(cur.trim())out.push(cur.trim());return out.length?out:[t];}
 function zekiSpeak(text,{force=false}={}){
   if(!window.speechSynthesis||(!sesAcik&&!force))return;
-  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='tr-TR';u.rate=1.03;u.pitch=1.0;if(trVoice)u.voice=trVoice;
-    u.onstart=()=>speakers(true);u.onend=()=>speakers(false);u.onerror=()=>speakers(false);speechSynthesis.speak(u);}catch(e){}
+  try{
+    speechSynthesis.cancel();
+    const clean=seslendirilebilir(text);if(!clean)return;
+    const chunks=_ttsParcala(clean);let i=0;speakers(true);
+    const next=()=>{
+      if(i>=chunks.length){speakers(false);return;}
+      const u=new SpeechSynthesisUtterance(chunks[i++]);
+      u.lang='tr-TR';u.rate=0.97;u.pitch=1.0;if(trVoice)u.voice=trVoice;
+      u.onend=next;u.onerror=()=>{ i<chunks.length?next():speakers(false); };
+      speechSynthesis.speak(u);
+    };
+    next();
+  }catch(e){}
 }
 function stopSpeak(){if(window.speechSynthesis)speechSynthesis.cancel();speakers(false);}
 function toggleSes(){
